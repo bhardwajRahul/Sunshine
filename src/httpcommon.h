@@ -1,6 +1,6 @@
 /**
  * @file src/httpcommon.h
- * @brief todo
+ * @brief Declarations for common HTTP.
  */
 #pragma once
 
@@ -30,7 +30,6 @@ namespace http {
   url_get_host(const std::string &url);
 
   extern std::string unique_id;
-  extern net::net_e origin_pin_allowed;
   extern net::net_e origin_web_ui_allowed;
 
 }  // namespace http

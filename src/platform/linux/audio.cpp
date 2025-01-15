@@ -1,9 +1,10 @@
 /**
  * @file src/platform/linux/audio.cpp
- * @brief todo
+ * @brief Definitions for audio control on Linux.
  */
 #include <bitset>
 #include <sstream>
+#include <thread>
 
 #include <boost/regex.hpp>
 
@@ -14,7 +15,7 @@
 #include "src/platform/common.h"
 
 #include "src/config.h"
-#include "src/main.h"
+#include "src/logging.h"
 #include "src/thread_safe.h"
 
 namespace platf {
@@ -35,7 +36,7 @@ namespace platf {
   to_string(const char *name, const std::uint8_t *mapping, int channels) {
     std::stringstream ss;
 
-    ss << "rate=48000 sink_name="sv << name << " format=s16le channels="sv << channels << " channel_map="sv;
+    ss << "rate=48000 sink_name="sv << name << " format=float channels="sv << channels << " channel_map="sv;
     std::for_each_n(mapping, channels - 1, [&ss](std::uint8_t pos) {
       ss << pa_channel_position_to_string(position_mapping[pos]) << ',';
     });
@@ -53,12 +54,12 @@ namespace platf {
     util::safe_ptr<pa_simple, pa_simple_free> mic;
 
     capture_e
-    sample(std::vector<std::int16_t> &sample_buf) override {
+    sample(std::vector<float> &sample_buf) override {
       auto sample_size = sample_buf.size();
 
       auto buf = sample_buf.data();
       int status;
-      if (pa_simple_read(mic.get(), buf, sample_size * 2, &status)) {
+      if (pa_simple_read(mic.get(), buf, sample_size * sizeof(float), &status)) {
         BOOST_LOG(error) << "pa_simple_read() failed: "sv << pa_strerror(status);
 
         return capture_e::error;
@@ -72,7 +73,7 @@ namespace platf {
   microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, std::string source_name) {
     auto mic = std::make_unique<mic_attr_t>();
 
-    pa_sample_spec ss { PA_SAMPLE_S16LE, sample_rate, (std::uint8_t) channels };
+    pa_sample_spec ss { PA_SAMPLE_FLOAT32, sample_rate, (std::uint8_t) channels };
     pa_channel_map pa_map;
 
     pa_map.channels = channels;
@@ -80,8 +81,13 @@ namespace platf {
       channel = position_mapping[*mapping++];
     });
 
-    pa_buffer_attr pa_attr = {};
-    pa_attr.maxlength = frame_size * 8;
+    pa_buffer_attr pa_attr = {
+      .maxlength = uint32_t(-1),
+      .tlength = uint32_t(-1),
+      .prebuf = uint32_t(-1),
+      .minreq = uint32_t(-1),
+      .fragsize = uint32_t(frame_size * channels * sizeof(float))
+    };
 
     int status;
 
@@ -465,6 +471,12 @@ namespace platf {
         if (sink_name.empty()) sink_name = get_default_sink_name();
 
         return ::platf::microphone(mapping, channels, sample_rate, frame_size, get_monitor_name(sink_name));
+      }
+
+      bool
+      is_sink_available(const std::string &sink) override {
+        BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
+        return true;
       }
 
       int

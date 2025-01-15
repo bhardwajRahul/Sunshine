@@ -1,13 +1,14 @@
 /**
  * @file src/upnp.cpp
- * @brief todo
+ * @brief Definitions for UPnP port mapping.
  */
-#include <miniupnpc.h>
-#include <upnpcommands.h>
+#include <miniupnpc/miniupnpc.h>
+#include <miniupnpc/upnpcommands.h>
 
 #include "config.h"
 #include "confighttp.h"
-#include "main.h"
+#include "globals.h"
+#include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
 #include "rtsp.h"
@@ -18,19 +19,6 @@
 using namespace std::literals;
 
 namespace upnp {
-  constexpr auto INET6_ADDRESS_STRLEN = 46;
-
-  constexpr auto PORT_MAPPING_LIFETIME = 3600s;
-  constexpr auto REFRESH_INTERVAL = 120s;
-
-  constexpr auto IPv4 = 0;
-  constexpr auto IPv6 = 1;
-
-  using device_t = util::safe_ptr<UPNPDev, freeUPNPDevlist>;
-
-  KITTY_USING_MOVE_T(urls_t, UPNPUrls, , {
-    FreeUPNPUrls(&el);
-  });
 
   struct mapping_t {
     struct {
@@ -58,16 +46,29 @@ namespace upnp {
     return "Unknown status"sv;
   }
 
+  /**
+   * This function is a wrapper around UPNP_GetValidIGD() that returns the status code. There is a pre-processor
+   * check to determine which version of the function to call based on the version of the MiniUPnPc library.
+   */
+  int
+  UPNP_GetValidIGDStatus(device_t &device, urls_t *urls, IGDdatas *data, std::array<char, INET6_ADDRESS_STRLEN> &lan_addr) {
+#if (MINIUPNPC_API_VERSION >= 18)
+    return UPNP_GetValidIGD(device.get(), &urls->el, data, lan_addr.data(), lan_addr.size(), nullptr, 0);
+#else
+    return UPNP_GetValidIGD(device.get(), &urls->el, data, lan_addr.data(), lan_addr.size());
+#endif
+  }
+
   class deinit_t: public platf::deinit_t {
   public:
     deinit_t() {
-      auto rtsp = std::to_string(::map_port(rtsp_stream::RTSP_SETUP_PORT));
-      auto video = std::to_string(::map_port(stream::VIDEO_STREAM_PORT));
-      auto audio = std::to_string(::map_port(stream::AUDIO_STREAM_PORT));
-      auto control = std::to_string(::map_port(stream::CONTROL_PORT));
-      auto gs_http = std::to_string(::map_port(nvhttp::PORT_HTTP));
-      auto gs_https = std::to_string(::map_port(nvhttp::PORT_HTTPS));
-      auto wm_http = std::to_string(::map_port(confighttp::PORT_HTTPS));
+      auto rtsp = std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT));
+      auto video = std::to_string(net::map_port(stream::VIDEO_STREAM_PORT));
+      auto audio = std::to_string(net::map_port(stream::AUDIO_STREAM_PORT));
+      auto control = std::to_string(net::map_port(stream::CONTROL_PORT));
+      auto gs_http = std::to_string(net::map_port(nvhttp::PORT_HTTP));
+      auto gs_https = std::to_string(net::map_port(nvhttp::PORT_HTTPS));
+      auto wm_http = std::to_string(net::map_port(confighttp::PORT_HTTPS));
 
       mappings.assign({
         { { rtsp, rtsp, "TCP"s }, "Sunshine - RTSP"s },
@@ -92,6 +93,84 @@ namespace upnp {
     }
 
     /**
+     * @brief Opens pinholes for IPv6 traffic if the IGD is capable.
+     * @details Not many IGDs support this feature, so we perform error logging with debug level.
+     * @return `true` if the pinholes were opened successfully.
+     */
+    bool
+    create_ipv6_pinholes() {
+      int err;
+      device_t device { upnpDiscover(2000, nullptr, nullptr, 0, IPv6, 2, &err) };
+      if (!device || err) {
+        BOOST_LOG(debug) << "Couldn't discover any IPv6 UPNP devices"sv;
+        return false;
+      }
+
+      IGDdatas data;
+      urls_t urls;
+      std::array<char, INET6_ADDRESS_STRLEN> lan_addr;
+      auto status = upnp::UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr);
+      if (status != 1 && status != 2) {
+        BOOST_LOG(debug) << "No valid IPv6 IGD: "sv << status_string(status);
+        return false;
+      }
+
+      if (data.IPv6FC.controlurl[0] != 0) {
+        int firewallEnabled, pinholeAllowed;
+
+        // Check if this firewall supports IPv6 pinholes
+        err = UPNP_GetFirewallStatus(urls->controlURL_6FC, data.IPv6FC.servicetype, &firewallEnabled, &pinholeAllowed);
+        if (err == UPNPCOMMAND_SUCCESS) {
+          BOOST_LOG(debug) << "UPnP IPv6 firewall control available. Firewall is "sv
+                           << (firewallEnabled ? "enabled"sv : "disabled"sv)
+                           << ", pinhole is "sv
+                           << (pinholeAllowed ? "allowed"sv : "disallowed"sv);
+
+          if (pinholeAllowed) {
+            // Create pinholes for each port
+            auto mapping_period = std::to_string(PORT_MAPPING_LIFETIME.count());
+            auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+
+            for (auto it = std::begin(mappings); it != std::end(mappings) && !shutdown_event->peek(); ++it) {
+              auto mapping = *it;
+              char uniqueId[8];
+
+              // Open a pinhole for the LAN port, since there will be no WAN->LAN port mapping on IPv6
+              err = UPNP_AddPinhole(urls->controlURL_6FC,
+                data.IPv6FC.servicetype,
+                "", "0",
+                lan_addr.data(),
+                mapping.port.lan.c_str(),
+                mapping.port.proto.c_str(),
+                mapping_period.c_str(),
+                uniqueId);
+              if (err == UPNPCOMMAND_SUCCESS) {
+                BOOST_LOG(debug) << "Successfully created pinhole for "sv << mapping.port.proto << ' ' << mapping.port.lan;
+              }
+              else {
+                BOOST_LOG(debug) << "Failed to create pinhole for "sv << mapping.port.proto << ' ' << mapping.port.lan << ": "sv << err;
+              }
+            }
+
+            return err == 0;
+          }
+          else {
+            BOOST_LOG(debug) << "IPv6 pinholes are not allowed by the IGD"sv;
+            return false;
+          }
+        }
+        else {
+          BOOST_LOG(debug) << "Failed to get IPv6 firewall status: "sv << err;
+          return false;
+        }
+      }
+      else {
+        BOOST_LOG(debug) << "IPv6 Firewall Control is not supported by the IGD"sv;
+        return false;
+      }
+    }
+
+    /**
      * @brief Maps a port via UPnP.
      * @param data IGDdatas from UPNP_GetValidIGD()
      * @param urls urls_t from UPNP_GetValidIGD()
@@ -100,7 +179,7 @@ namespace upnp {
      * @return `true` on success.
      */
     bool
-    map_port(const IGDdatas &data, const urls_t &urls, const std::string &lan_addr, const mapping_t &mapping) {
+    map_upnp_port(const IGDdatas &data, const urls_t &urls, const std::string &lan_addr, const mapping_t &mapping) {
       char intClient[16];
       char intPort[6];
       char desc[80];
@@ -201,11 +280,11 @@ namespace upnp {
 
     /**
      * @brief Unmaps all ports.
+     * @param urls urls_t from UPNP_GetValidIGD()
      * @param data IGDdatas from UPNP_GetValidIGD()
-     * @param data urls_t from UPNP_GetValidIGD()
      */
     void
-    unmap_all_ports(const urls_t &urls, const IGDdatas &data) {
+    unmap_all_upnp_ports(const urls_t &urls, const IGDdatas &data) {
       for (auto it = std::begin(mappings); it != std::end(mappings); ++it) {
         auto status = UPNP_DeletePortMapping(
           urls->controlURL,
@@ -232,6 +311,7 @@ namespace upnp {
       bool mapped = false;
       IGDdatas data;
       urls_t mapped_urls;
+      auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
       // Refresh UPnP rules every few minutes. They can be lost if the router reboots,
       // WAN IP address changes, or various other conditions.
@@ -239,7 +319,7 @@ namespace upnp {
         int err = 0;
         device_t device { upnpDiscover(2000, nullptr, nullptr, 0, IPv4, 2, &err) };
         if (!device || err) {
-          BOOST_LOG(warning) << "Couldn't discover any UPNP devices"sv;
+          BOOST_LOG(warning) << "Couldn't discover any IPv4 UPNP devices"sv;
           mapped = false;
           continue;
         }
@@ -251,7 +331,7 @@ namespace upnp {
         std::array<char, INET6_ADDRESS_STRLEN> lan_addr;
 
         urls_t urls;
-        auto status = UPNP_GetValidIGD(device.get(), &urls.el, &data, lan_addr.data(), lan_addr.size());
+        auto status = upnp::UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr);
         if (status != 1 && status != 2) {
           BOOST_LOG(error) << status_string(status);
           mapped = false;
@@ -263,11 +343,19 @@ namespace upnp {
         BOOST_LOG(debug) << "Found valid IGD device: "sv << urls->rootdescURL;
 
         for (auto it = std::begin(mappings); it != std::end(mappings) && !shutdown_event->peek(); ++it) {
-          map_port(data, urls, lan_addr_str, *it);
+          map_upnp_port(data, urls, lan_addr_str, *it);
         }
 
         if (!mapped) {
           BOOST_LOG(info) << "Completed UPnP port mappings to "sv << lan_addr_str << " via "sv << urls->rootdescURL;
+        }
+
+        // If we are listening on IPv6 and the IGD has an IPv6 firewall enabled, try to create IPv6 firewall pinholes
+        if (address_family == net::af_e::BOTH) {
+          if (create_ipv6_pinholes() && !mapped) {
+            // Only log the first time through
+            BOOST_LOG(info) << "Successfully opened IPv6 pinholes on the IGD"sv;
+          }
         }
 
         mapped = true;
@@ -277,7 +365,7 @@ namespace upnp {
       if (mapped) {
         // Unmap ports upon termination
         BOOST_LOG(info) << "Unmapping UPNP ports..."sv;
-        unmap_all_ports(mapped_urls, data);
+        unmap_all_upnp_ports(mapped_urls, data);
       }
     }
 

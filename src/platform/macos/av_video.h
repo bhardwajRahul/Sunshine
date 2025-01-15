@@ -1,10 +1,11 @@
 /**
  * @file src/platform/macos/av_video.h
- * @brief todo
+ * @brief Declarations for video capture on macOS.
  */
 #pragma once
 
 #import <AVFoundation/AVFoundation.h>
+#import <AppKit/AppKit.h>
 
 struct CaptureSession {
   AVCaptureVideoDataOutput *output;
@@ -20,11 +21,6 @@ struct CaptureSession {
 @property (nonatomic, assign) OSType pixelFormat;
 @property (nonatomic, assign) int frameWidth;
 @property (nonatomic, assign) int frameHeight;
-@property (nonatomic, assign) float scaling;
-@property (nonatomic, assign) int paddingLeft;
-@property (nonatomic, assign) int paddingRight;
-@property (nonatomic, assign) int paddingTop;
-@property (nonatomic, assign) int paddingBottom;
 
 typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 
@@ -34,6 +30,7 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *captureSignals;
 
 + (NSArray<NSDictionary *> *)displayNames;
++ (NSString *)getDisplayName:(CGDirectDisplayID)displayID;
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate;
 

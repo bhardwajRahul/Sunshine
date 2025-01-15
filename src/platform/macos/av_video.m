@@ -1,6 +1,6 @@
 /**
  * @file src/platform/macos/av_video.m
- * @brief todo
+ * @brief Definitions for video capture on macOS.
  */
 #import "av_video.h"
 
@@ -23,11 +23,21 @@
   for (uint32_t i = 0; i < count; i++) {
     [result addObject:@{
       @"id": [NSNumber numberWithUnsignedInt:displays[i]],
-      @"name": [NSString stringWithFormat:@"%d", displays[i]]
+      @"name": [NSString stringWithFormat:@"%d", displays[i]],
+      @"displayName": [self getDisplayName:displays[i]],
     }];
   }
 
   return [NSArray arrayWithArray:result];
+}
+
++ (NSString *)getDisplayName:(CGDirectDisplayID)displayID {
+  for (NSScreen *screen in [NSScreen screens]) {
+    if (screen.deviceDescription[@"NSScreenNumber"] == [NSNumber numberWithUnsignedInt:displayID]) {
+      return screen.localizedName;
+    }
+  }
+  return nil;
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
@@ -37,13 +47,8 @@
 
   self.displayID = displayID;
   self.pixelFormat = kCVPixelFormatType_32BGRA;
-  self.frameWidth = CGDisplayModeGetPixelWidth(mode);
-  self.frameHeight = CGDisplayModeGetPixelHeight(mode);
-  self.scaling = CGDisplayPixelsWide(displayID) / CGDisplayModeGetPixelWidth(mode);
-  self.paddingLeft = 0;
-  self.paddingRight = 0;
-  self.paddingTop = 0;
-  self.paddingBottom = 0;
+  self.frameWidth = (int) CGDisplayModeGetPixelWidth(mode);
+  self.frameHeight = (int) CGDisplayModeGetPixelHeight(mode);
   self.minFrameDuration = CMTimeMake(1, frameRate);
   self.session = [[AVCaptureSession alloc] init];
   self.videoOutputs = [[NSMapTable alloc] init];
@@ -77,48 +82,8 @@
 }
 
 - (void)setFrameWidth:(int)frameWidth frameHeight:(int)frameHeight {
-  CGImageRef screenshot = CGDisplayCreateImage(self.displayID);
-
   self.frameWidth = frameWidth;
   self.frameHeight = frameHeight;
-
-  double screenRatio = (double) CGImageGetWidth(screenshot) / (double) CGImageGetHeight(screenshot);
-  double streamRatio = (double) frameWidth / (double) frameHeight;
-
-  if (screenRatio < streamRatio) {
-    int padding = frameWidth - (frameHeight * screenRatio);
-    self.paddingLeft = padding / 2;
-    self.paddingRight = padding - self.paddingLeft;
-    self.paddingTop = 0;
-    self.paddingBottom = 0;
-  }
-  else {
-    int padding = frameHeight - (frameWidth / screenRatio);
-    self.paddingLeft = 0;
-    self.paddingRight = 0;
-    self.paddingTop = padding / 2;
-    self.paddingBottom = padding - self.paddingTop;
-  }
-
-  // XXX: if the streamed image is larger than the native resolution, we add a black box around
-  // the frame. Instead the frame should be resized entirely.
-  int delta_width = frameWidth - (CGImageGetWidth(screenshot) + self.paddingLeft + self.paddingRight);
-  if (delta_width > 0) {
-    int adjust_left = delta_width / 2;
-    int adjust_right = delta_width - adjust_left;
-    self.paddingLeft += adjust_left;
-    self.paddingRight += adjust_right;
-  }
-
-  int delta_height = frameHeight - (CGImageGetHeight(screenshot) + self.paddingTop + self.paddingBottom);
-  if (delta_height > 0) {
-    int adjust_top = delta_height / 2;
-    int adjust_bottom = delta_height - adjust_top;
-    self.paddingTop += adjust_top;
-    self.paddingBottom += adjust_bottom;
-  }
-
-  CFRelease(screenshot);
 }
 
 - (dispatch_semaphore_t)capture:(FrameCallbackBlock)frameCallback {
@@ -128,11 +93,8 @@
     [videoOutput setVideoSettings:@{
       (NSString *) kCVPixelBufferPixelFormatTypeKey: [NSNumber numberWithUnsignedInt:self.pixelFormat],
       (NSString *) kCVPixelBufferWidthKey: [NSNumber numberWithInt:self.frameWidth],
-      (NSString *) kCVPixelBufferExtendedPixelsRightKey: [NSNumber numberWithInt:self.paddingRight],
-      (NSString *) kCVPixelBufferExtendedPixelsLeftKey: [NSNumber numberWithInt:self.paddingLeft],
-      (NSString *) kCVPixelBufferExtendedPixelsTopKey: [NSNumber numberWithInt:self.paddingTop],
-      (NSString *) kCVPixelBufferExtendedPixelsBottomKey: [NSNumber numberWithInt:self.paddingBottom],
-      (NSString *) kCVPixelBufferHeightKey: [NSNumber numberWithInt:self.frameHeight]
+      (NSString *) kCVPixelBufferHeightKey: [NSNumber numberWithInt:self.frameHeight],
+      (NSString *) AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
     }];
 
     dispatch_queue_attr_t qos = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL,

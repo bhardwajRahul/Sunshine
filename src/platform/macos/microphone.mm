@@ -1,48 +1,48 @@
 /**
  * @file src/platform/macos/microphone.mm
- * @brief todo
+ * @brief Definitions for microphone capture on macOS.
  */
 #include "src/platform/common.h"
 #include "src/platform/macos/av_audio.h"
 
 #include "src/config.h"
-#include "src/main.h"
+#include "src/logging.h"
 
 namespace platf {
   using namespace std::literals;
 
   struct av_mic_t: public mic_t {
-    AVAudio *av_audio_capture;
+    AVAudio *av_audio_capture {};
 
-    ~av_mic_t() {
+    ~av_mic_t() override {
       [av_audio_capture release];
     }
 
     capture_e
-    sample(std::vector<std::int16_t> &sample_in) override {
+    sample(std::vector<float> &sample_in) override {
       auto sample_size = sample_in.size();
 
       uint32_t length = 0;
       void *byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
 
-      while (length < sample_size * sizeof(std::int16_t)) {
+      while (length < sample_size * sizeof(float)) {
         [av_audio_capture.samplesArrivedSignal wait];
         byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
       }
 
-      const int16_t *sampleBuffer = (int16_t *) byteSampleBuffer;
-      std::vector<int16_t> vectorBuffer(sampleBuffer, sampleBuffer + sample_size);
+      const float *sampleBuffer = (float *) byteSampleBuffer;
+      std::vector<float> vectorBuffer(sampleBuffer, sampleBuffer + sample_size);
 
       std::copy_n(std::begin(vectorBuffer), sample_size, std::begin(sample_in));
 
-      TPCircularBufferConsume(&av_audio_capture->audioSampleBuffer, sample_size * sizeof(std::int16_t));
+      TPCircularBufferConsume(&av_audio_capture->audioSampleBuffer, sample_size * sizeof(float));
 
       return capture_e::ok;
     }
   };
 
   struct macos_audio_control_t: public audio_control_t {
-    AVCaptureDevice *audio_capture_device;
+    AVCaptureDevice *audio_capture_device {};
 
   public:
     int
@@ -79,6 +79,12 @@ namespace platf {
       }
 
       return mic;
+    }
+
+    bool
+    is_sink_available(const std::string &sink) override {
+      BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
+      return true;
     }
 
     std::optional<sink_t>

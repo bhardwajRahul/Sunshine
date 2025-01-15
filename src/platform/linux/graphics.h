@@ -1,6 +1,6 @@
 /**
  * @file src/platform/linux/graphics.h
- * @brief todo
+ * @brief Declarations for graphics related functions.
  */
 #pragma once
 
@@ -11,9 +11,10 @@
 #include <glad/gl.h>
 
 #include "misc.h"
-#include "src/main.h"
+#include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
+#include "src/video_colorspace.h"
 
 #define SUNSHINE_STRINGIFY_HELPER(x) #x
 #define SUNSHINE_STRINGIFY(x) SUNSHINE_STRINGIFY_HELPER(x)
@@ -267,15 +268,29 @@ namespace egl {
     display_t::pointer egl_display,
     const surface_descriptor_t &xrgb);
 
+  rgb_t
+  create_blank(platf::img_t &img);
+
   std::optional<nv12_t>
   import_target(
     display_t::pointer egl_display,
     std::array<file_t, nv12_img_t::num_fds> &&fds,
-    const surface_descriptor_t &r8, const surface_descriptor_t &gr88);
+    const surface_descriptor_t &y, const surface_descriptor_t &uv);
+
+  /**
+   * @brief Creates biplanar YUV textures to render into.
+   * @param width Width of the target frame.
+   * @param height Height of the target frame.
+   * @param format Format of the target frame.
+   * @return The new RGB texture.
+   */
+  std::optional<nv12_t>
+  create_target(int width, int height, AVPixelFormat format);
 
   class cursor_t: public platf::img_t {
   public:
     int x, y;
+    int src_w, src_h;
 
     unsigned long serial;
 
@@ -309,9 +324,9 @@ namespace egl {
   class sws_t {
   public:
     static std::optional<sws_t>
-    make(int in_width, int in_height, int out_width, int out_heigth, gl::tex_t &&tex);
+    make(int in_width, int in_height, int out_width, int out_height, gl::tex_t &&tex);
     static std::optional<sws_t>
-    make(int in_width, int in_height, int out_width, int out_heigth);
+    make(int in_width, int in_height, int out_width, int out_height, AVPixelFormat format);
 
     // Convert the loaded image into the first two framebuffers
     int
@@ -327,7 +342,7 @@ namespace egl {
     load_vram(img_descriptor_t &img, int offset_x, int offset_y, int texture);
 
     void
-    set_colorspace(std::uint32_t colorspace, std::uint32_t color_range);
+    apply_colorspace(const video::sunshine_colorspace_t &colorspace);
 
     // The first texture is the monitor image.
     // The second texture is the cursor image

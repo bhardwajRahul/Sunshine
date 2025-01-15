@@ -1,6 +1,6 @@
 /**
  * @file src/platform/macos/av_audio.m
- * @brief todo
+ * @brief Definitions for audio capture on macOS.
  */
 #import "av_audio.h"
 
@@ -87,8 +87,8 @@
     (NSString *) AVFormatIDKey: [NSNumber numberWithUnsignedInt:kAudioFormatLinearPCM],
     (NSString *) AVSampleRateKey: [NSNumber numberWithUnsignedInt:sampleRate],
     (NSString *) AVNumberOfChannelsKey: [NSNumber numberWithUnsignedInt:channels],
-    (NSString *) AVLinearPCMBitDepthKey: [NSNumber numberWithUnsignedInt:16],
-    (NSString *) AVLinearPCMIsFloatKey: @NO,
+    (NSString *) AVLinearPCMBitDepthKey: [NSNumber numberWithUnsignedInt:32],
+    (NSString *) AVLinearPCMIsFloatKey: @YES,
     (NSString *) AVLinearPCMIsNonInterleaved: @NO
   }];
 
@@ -130,9 +130,9 @@
 
     CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(sampleBuffer, NULL, &audioBufferList, sizeof(audioBufferList), NULL, NULL, 0, &blockBuffer);
 
-    // NSAssert(audioBufferList.mNumberBuffers == 1, @"Expected interlveaved PCM format but buffer contained %u streams", audioBufferList.mNumberBuffers);
+    // NSAssert(audioBufferList.mNumberBuffers == 1, @"Expected interleaved PCM format but buffer contained %u streams", audioBufferList.mNumberBuffers);
 
-    // this is safe, because an interleaved PCM stream has exactly one buffer
+    // this is safe, because an interleaved PCM stream has exactly one buffer,
     // and we don't want to do sanity checks in a performance critical exec path
     AudioBuffer audioBuffer = audioBufferList.mBuffers[0];
 

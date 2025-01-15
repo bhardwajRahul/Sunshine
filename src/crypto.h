@@ -1,6 +1,6 @@
 /**
  * @file src/crypto.h
- * @brief todo
+ * @brief Declarations for cryptography functions.
  */
 #pragma once
 
@@ -17,14 +17,13 @@ namespace crypto {
     std::string x509;
     std::string pkey;
   };
-  constexpr std::size_t digest_size = 256;
 
   void
   md_ctx_destroy(EVP_MD_CTX *);
 
   using sha256_t = std::array<std::uint8_t, SHA256_DIGEST_LENGTH>;
 
-  using aes_t = std::array<std::uint8_t, 16>;
+  using aes_t = std::vector<std::uint8_t>;
   using x509_t = util::safe_ptr<X509, X509_free>;
   using x509_store_t = util::safe_ptr<X509_STORE, X509_STORE_free>;
   using x509_store_ctx_t = util::safe_ptr<X509_STORE_CTX, X509_STORE_CTX_free>;
@@ -35,6 +34,11 @@ namespace crypto {
   using pkey_ctx_t = util::safe_ptr<EVP_PKEY_CTX, EVP_PKEY_CTX_free>;
   using bignum_t = util::safe_ptr<BIGNUM, BN_free>;
 
+  /**
+   * @brief Hashes the given plaintext using SHA-256.
+   * @param plaintext
+   * @return The SHA-256 hash of the plaintext.
+   */
   sha256_t
   hash(const std::string_view &plaintext);
 
@@ -73,6 +77,9 @@ namespace crypto {
 
     void
     add(x509_t &&cert);
+
+    void
+    clear();
 
     const char *
     verify(x509_t::element_type *cert);
@@ -124,10 +131,23 @@ namespace crypto {
       gcm_t(const crypto::aes_t &key, bool padding = true);
 
       /**
+       * @brief Encrypts the plaintext using AES GCM mode.
+       * @param plaintext The plaintext data to be encrypted.
+       * @param tag The buffer where the GCM tag will be written.
+       * @param ciphertext The buffer where the resulting ciphertext will be written.
+       * @param iv The initialization vector to be used for the encryption.
+       * @return The total length of the ciphertext and GCM tag. Returns -1 in case of an error.
+       */
+      int
+      encrypt(const std::string_view &plaintext, std::uint8_t *tag, std::uint8_t *ciphertext, aes_t *iv);
+
+      /**
+       * @brief Encrypts the plaintext using AES GCM mode.
        * length of cipher must be at least: round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size
-       *
-       * return -1 on error
-       * return bytes written on success
+       * @param plaintext The plaintext data to be encrypted.
+       * @param tagged_cipher The buffer where the resulting ciphertext and GCM tag will be written.
+       * @param iv The initialization vector to be used for the encryption.
+       * @return The total length of the ciphertext and GCM tag written into tagged_cipher. Returns -1 in case of an error.
        */
       int
       encrypt(const std::string_view &plaintext, std::uint8_t *tagged_cipher, aes_t *iv);
@@ -146,10 +166,12 @@ namespace crypto {
       cbc_t(const crypto::aes_t &key, bool padding = true);
 
       /**
+       * @brief Encrypts the plaintext using AES CBC mode.
        * length of cipher must be at least: round_to_pkcs7_padded(plaintext.size())
-       *
-       * return -1 on error
-       * return bytes written on success
+       * @param plaintext The plaintext data to be encrypted.
+       * @param cipher The buffer where the resulting ciphertext will be written.
+       * @param iv The initialization vector to be used for the encryption.
+       * @return The total length of the ciphertext written into cipher. Returns -1 in case of an error.
        */
       int
       encrypt(const std::string_view &plaintext, std::uint8_t *cipher, aes_t *iv);

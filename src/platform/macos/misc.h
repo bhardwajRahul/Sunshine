@@ -1,6 +1,6 @@
 /**
  * @file src/platform/macos/misc.h
- * @brief todo
+ * @brief Miscellaneous declarations for macOS platform.
  */
 #pragma once
 
@@ -8,8 +8,13 @@
 
 #include <CoreGraphics/CoreGraphics.h>
 
+namespace platf {
+  bool
+  is_screen_capture_allowed();
+}
+
 namespace dyn {
-  typedef void (*apiproc)(void);
+  typedef void (*apiproc)();
 
   int
   load(void *handle, const std::vector<std::tuple<apiproc *, const char *>> &funcs, bool strict = true);

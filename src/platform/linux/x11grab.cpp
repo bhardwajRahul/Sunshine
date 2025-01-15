@@ -1,10 +1,11 @@
 /**
  * @file src/platform/linux/x11grab.cpp
- * @brief todo
+ * @brief Definitions for x11 capture.
  */
 #include "src/platform/common.h"
 
 #include <fstream>
+#include <thread>
 
 #include <X11/X.h>
 #include <X11/Xlib.h>
@@ -17,7 +18,8 @@
 #include <xcb/xfixes.h>
 
 #include "src/config.h"
-#include "src/main.h"
+#include "src/globals.h"
+#include "src/logging.h"
 #include "src/task_pool.h"
 #include "src/video.h"
 
@@ -419,7 +421,7 @@ namespace platf {
       }
 
       if (streamedMonitor != -1) {
-        BOOST_LOG(info) << "Configuring selected monitor ("sv << streamedMonitor << ") to stream"sv;
+        BOOST_LOG(info) << "Configuring selected display ("sv << streamedMonitor << ") to stream"sv;
         screen_res_t screenr { x11::rr::GetScreenResources(xdisplay.get(), xwindow) };
         int output = screenr->noutput;
 
@@ -479,17 +481,21 @@ namespace platf {
     capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
       auto next_frame = std::chrono::steady_clock::now();
 
+      sleep_overshoot_logger.reset();
+
       while (true) {
         auto now = std::chrono::steady_clock::now();
 
         if (next_frame > now) {
-          std::this_thread::sleep_for((next_frame - now) / 3 * 2);
+          std::this_thread::sleep_for(next_frame - now);
+          sleep_overshoot_logger.first_point(next_frame);
+          sleep_overshoot_logger.second_point_now_and_log();
         }
-        while (next_frame > now) {
-          std::this_thread::sleep_for(1ns);
-          now = std::chrono::steady_clock::now();
+
+        next_frame += delay;
+        if (next_frame < now) {  // some major slowdown happened; we couldn't keep up
+          next_frame = now + delay;
         }
-        next_frame = now + delay;
 
         std::shared_ptr<platf::img_t> img_out;
         auto status = snapshot(pull_free_image_cb, img_out, 1000ms, *cursor);
@@ -533,6 +539,7 @@ namespace platf {
       auto img = (x11_img_t *) img_out.get();
 
       XImage *x_img { x11::GetImage(xdisplay.get(), xwindow, offset_x, offset_y, width, height, AllPlanes, ZPixmap) };
+      img->frame_timestamp = std::chrono::steady_clock::now();
 
       img->width = x_img->width;
       img->height = x_img->height;
@@ -553,19 +560,21 @@ namespace platf {
       return std::make_shared<x11_img_t>();
     }
 
-    std::shared_ptr<hwdevice_t>
-    make_hwdevice(pix_fmt_e pix_fmt) override {
+    std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt) override {
+#ifdef SUNSHINE_BUILD_VAAPI
       if (mem_type == mem_type_e::vaapi) {
-        return va::make_hwdevice(width, height, false);
-      }
-
-#ifdef SUNSHINE_BUILD_CUDA
-      if (mem_type == mem_type_e::cuda) {
-        return cuda::make_hwdevice(width, height, false);
+        return va::make_avcodec_encode_device(width, height, false);
       }
 #endif
 
-      return std::make_shared<hwdevice_t>();
+#ifdef SUNSHINE_BUILD_CUDA
+      if (mem_type == mem_type_e::cuda) {
+        return cuda::make_avcodec_encode_device(width, height, false);
+      }
+#endif
+
+      return std::make_unique<avcodec_encode_device_t>();
     }
 
     int
@@ -609,25 +618,28 @@ namespace platf {
     }
 
     ~shm_attr_t() override {
-      while (!task_pool.cancel(refresh_task_id))
-        ;
+      while (!task_pool.cancel(refresh_task_id));
     }
 
     capture_e
     capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
       auto next_frame = std::chrono::steady_clock::now();
 
+      sleep_overshoot_logger.reset();
+
       while (true) {
         auto now = std::chrono::steady_clock::now();
 
         if (next_frame > now) {
-          std::this_thread::sleep_for((next_frame - now) / 3 * 2);
+          std::this_thread::sleep_for(next_frame - now);
+          sleep_overshoot_logger.first_point(next_frame);
+          sleep_overshoot_logger.second_point_now_and_log();
         }
-        while (next_frame > now) {
-          std::this_thread::sleep_for(1ns);
-          now = std::chrono::steady_clock::now();
+
+        next_frame += delay;
+        if (next_frame < now) {  // some major slowdown happened; we couldn't keep up
+          next_frame = now + delay;
         }
-        next_frame = now + delay;
 
         std::shared_ptr<platf::img_t> img_out;
         auto status = snapshot(pull_free_image_cb, img_out, 1000ms, *cursor);
@@ -664,6 +676,7 @@ namespace platf {
       }
       else {
         auto img_cookie = xcb::shm_get_image_unchecked(xcb.get(), display->root, offset_x, offset_y, width, height, ~0, XCB_IMAGE_FORMAT_Z_PIXMAP, seg, 0);
+        auto frame_timestamp = std::chrono::steady_clock::now();
 
         xcb_img_t img_reply { xcb::shm_get_image_reply(xcb.get(), img_cookie, nullptr) };
         if (!img_reply) {
@@ -676,6 +689,7 @@ namespace platf {
         }
 
         std::copy_n((std::uint8_t *) data.data, frame_size(), img_out->data);
+        img_out->frame_timestamp = frame_timestamp;
 
         if (cursor) {
           blend_cursor(shm_xdisplay.get(), *img_out, offset_x, offset_y);
@@ -791,7 +805,7 @@ namespace platf {
       return {};
     }
 
-    BOOST_LOG(info) << "Detecting monitors"sv;
+    BOOST_LOG(info) << "Detecting displays"sv;
 
     x11::xdisplay_t xdisplay { x11::OpenDisplay(nullptr) };
     if (!xdisplay) {
@@ -806,7 +820,7 @@ namespace platf {
     for (int x = 0; x < output; ++x) {
       output_info_t out_info { x11::rr::GetOutputInfo(xdisplay.get(), screenr.get(), screenr->outputs[x]) };
       if (out_info) {
-        BOOST_LOG(info) << "Detected monitor "sv << monitor << ": "sv << out_info->name << ", connected: "sv << (out_info->connection == RR_Connected);
+        BOOST_LOG(info) << "Detected display: "sv << out_info->name << " (id: "sv << monitor << ")"sv << out_info->name << " connected: "sv << (out_info->connection == RR_Connected);
         ++monitor;
       }
     }
@@ -881,8 +895,8 @@ namespace platf {
       }
 
       img.data = img.buffer.data();
-      img.width = xcursor->width;
-      img.height = xcursor->height;
+      img.width = img.src_w = xcursor->width;
+      img.height = img.src_h = xcursor->height;
       img.x = xcursor->x - xcursor->xhot;
       img.y = xcursor->y - xcursor->yhot;
       img.pixel_pitch = 4;

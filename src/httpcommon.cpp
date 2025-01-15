@@ -1,12 +1,13 @@
 /**
  * @file src/httpcommon.cpp
- * @brief todo
+ * @brief Definitions for common HTTP.
  */
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "process.h"
 
 #include <filesystem>
+#include <utility>
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -21,8 +22,9 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "file_handler.h"
 #include "httpcommon.h"
-#include "main.h"
+#include "logging.h"
 #include "network.h"
 #include "nvhttp.h"
 #include "platform/common.h"
@@ -41,13 +43,11 @@ namespace http {
   user_creds_exist(const std::string &file);
 
   std::string unique_id;
-  net::net_e origin_pin_allowed;
   net::net_e origin_web_ui_allowed;
 
   int
   init() {
     bool clean_slate = config::sunshine.flags[config::flag::FRESH_STATE];
-    origin_pin_allowed = net::from_enum_string(config::nvhttp.origin_pin_allowed);
     origin_web_ui_allowed = net::from_enum_string(config::nvhttp.origin_web_ui_allowed);
 
     if (clean_slate) {
@@ -162,12 +162,12 @@ namespace http {
       return -1;
     }
 
-    if (write_file(pkey.c_str(), creds.pkey)) {
+    if (file_handler::write_file(pkey.c_str(), creds.pkey)) {
       BOOST_LOG(error) << "Couldn't open ["sv << config::nvhttp.pkey << ']';
       return -1;
     }
 
-    if (write_file(cert.c_str(), creds.x509)) {
+    if (file_handler::write_file(cert.c_str(), creds.x509)) {
       BOOST_LOG(error) << "Couldn't open ["sv << config::nvhttp.cert << ']';
       return -1;
     }
@@ -196,26 +196,39 @@ namespace http {
   bool
   download_file(const std::string &url, const std::string &file) {
     CURL *curl = curl_easy_init();
-    if (!curl) {
+    if (curl) {
+      // sonar complains about weak ssl and tls versions
+      // ideally, the setopts should go after the early returns; however sonar cannot detect the fix
+      curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
+    }
+    else {
       BOOST_LOG(error) << "Couldn't create CURL instance";
       return false;
     }
+
+    std::string file_dir = file_handler::get_parent_directory(file);
+    if (!file_handler::make_directory(file_dir)) {
+      BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << ']';
+      curl_easy_cleanup(curl);
+      return false;
+    }
+
     FILE *fp = fopen(file.c_str(), "wb");
     if (!fp) {
       BOOST_LOG(error) << "Couldn't open ["sv << file << ']';
       curl_easy_cleanup(curl);
       return false;
     }
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
-#ifdef _WIN32
-    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, CURLSSLOPT_NATIVE_CA);
-#endif
+
     CURLcode result = curl_easy_perform(curl);
     if (result != CURLE_OK) {
       BOOST_LOG(error) << "Couldn't download ["sv << url << ", code:" << result << ']';
     }
+
     curl_easy_cleanup(curl);
     fclose(fp);
     return result == CURLE_OK;
