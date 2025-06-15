@@ -49,7 +49,7 @@ jobs:
 
       - name: Setup Release
         id: setup_release
-        uses: LizardByte/setup-release-action@v2025.426.225
+        uses: LizardByte/setup-release-action@v2025.612.120948
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
@@ -252,7 +252,7 @@ jobs:
 
       - name: Create/Update GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: LizardByte/create-release-action@v2025.612.13419
         with:
           allowUpdates: true
           body: ${{ needs.setup_release.outputs.release_body }}
@@ -264,6 +264,8 @@ jobs:
 
   build_linux:
     name: Linux ${{ matrix.type }}
+    env:
+      APP_ID: dev.lizardbyte.app.Sunshine
     runs-on: ubuntu-${{ matrix.dist }}
     needs: setup_release
     strategy:
@@ -364,7 +366,7 @@ jobs:
           chmod +x ./AppDir/AppRun
 
           # variables
-          DESKTOP_FILE="${DESKTOP_FILE:-sunshine.desktop}"
+          DESKTOP_FILE="${DESKTOP_FILE:-${APP_ID}.desktop}"
           ICON_FILE="${ICON_FILE:-sunshine.png}"
 
           # AppImage
@@ -483,7 +485,7 @@ jobs:
 
       - name: Create/Update GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: LizardByte/create-release-action@v2025.612.13419
         with:
           allowUpdates: true
           body: ${{ needs.setup_release.outputs.release_body }}
@@ -505,6 +507,8 @@ jobs:
           - os_version: "13"
             os_name: "macos"
           - os_version: "14"
+            os_name: "macos"
+          - os_version: "15"
             os_name: "macos"
           - os_version: "latest"
             os_name: "ubuntu"
@@ -617,7 +621,7 @@ jobs:
       - name: Validate Homebrew Formula
         id: test
         if: matrix.release != true
-        uses: LizardByte/homebrew-release-action@v2025.506.15440
+        uses: LizardByte/homebrew-release-action@v2025.612.123332
         with:
           formula_file: ${{ github.workspace }}/homebrew/sunshine.rb
           git_email: ${{ secrets.GH_BOT_EMAIL }}
@@ -695,7 +699,7 @@ jobs:
         if: >-
           matrix.release &&
           needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: LizardByte/create-release-action@v2025.612.13419
         with:
           allowUpdates: true
           artifacts: '${{ github.workspace }}/homebrew/*'
@@ -730,7 +734,7 @@ jobs:
           github.repository_owner == 'LizardByte' &&
           matrix.release &&
           needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/homebrew-release-action@v2025.506.15440
+        uses: LizardByte/homebrew-release-action@v2025.612.123332
         with:
           formula_file: ${{ github.workspace }}/homebrew/sunshine-beta.rb
           git_email: ${{ secrets.GH_BOT_EMAIL }}
@@ -1073,7 +1077,7 @@ jobs:
 
       - name: Create/Update GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: LizardByte/create-release-action@v2025.612.13419
         with:
           allowUpdates: true
           body: ${{ needs.setup_release.outputs.release_body }}
